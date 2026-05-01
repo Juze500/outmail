@@ -3,3 +3,4 @@
 /frontend/app/dist
 /backend-fresh/bootstrap/cache
 /backend-fresh/vendor
+/backend-fresh/storage
