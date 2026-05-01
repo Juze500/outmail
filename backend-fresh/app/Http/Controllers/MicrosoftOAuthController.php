@@ -14,6 +14,7 @@ use GuzzleHttp\HandlerStack;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
@@ -95,21 +96,35 @@ class MicrosoftOAuthController extends Controller
     {
         $defaultFrontend = rtrim(env('FRONTEND_URL', 'http://localhost:7100'), '/');
 
+        // Extract the return_url from state early — Microsoft returns the state
+        // parameter even on error responses, so we can redirect to the right
+        // frontend URL regardless of whether the auth succeeded or failed.
+        [$stateUserId, $stateReturnUrl] = $this->verifyState($request->query('state', ''), true);
+        $base = rtrim($stateReturnUrl ?: $defaultFrontend, '/');
+
         // ----- CSRF / error guard -----
         if ($request->has('error')) {
-            $desc = $request->query('error_description', 'Unknown error');
-            return redirect("{$defaultFrontend}/?oauth_error=" . urlencode($desc));
+            $error = $request->query('error', '');
+            $desc  = $request->query('error_description', 'Unknown error');
+
+            // Detect "organization admin approval required" errors.
+            // Microsoft returns error=admin_required OR error=consent_required,
+            // and the description typically contains AADSTS65001 or AADSTS90094.
+            $isAdminRequired = in_array($error, ['admin_required', 'consent_required'], true)
+                || str_contains($desc, 'AADSTS65001')
+                || str_contains($desc, 'AADSTS90094');
+
+            if ($isAdminRequired) {
+                return redirect("{$base}/?oauth_error=admin_required");
+            }
+
+            return redirect("{$base}/?oauth_error=" . urlencode($desc));
         }
 
-        // Verify the stateless HMAC state.
-        // allowAnon=true so userId=0 (user-login flow) passes verification.
-        [$userId, $returnUrl] = $this->verifyState($request->query('state', ''), true);
-        if ($userId === null) {
+        // ----- State verification -----
+        if ($stateUserId === null) {
             return redirect("{$defaultFrontend}/?oauth_error=" . urlencode('Invalid or tampered state parameter. Please try again.'));
         }
-
-        // Use the return_url embedded in state, or fall back to default frontend.
-        $base = rtrim($returnUrl ?: $defaultFrontend, '/');
 
         // ----- Token exchange (same redirect_uri for both flows) -----
         try {
@@ -128,13 +143,13 @@ class MicrosoftOAuthController extends Controller
         }
 
         // ----- Branch: userId=0 → user sign-in/register; userId>0 → account-link -----
-        if ($userId === 0) {
+        if ($stateUserId === 0) {
             return $this->handleUserLogin($tokens, $profile, $base);
         }
 
         // ----- Upsert connected account -----
         try {
-            $this->upsertAccount((int) $userId, $tokens, $profile);
+            $this->upsertAccount((int) $stateUserId, $tokens, $profile);
         } catch (\Throwable $e) {
             \Log::error('OAuth upsert account failed', ['error' => $e->getMessage()]);
             return redirect("{$base}/?oauth_error=" . urlencode('Failed to save account: ' . $e->getMessage()));
@@ -232,6 +247,302 @@ class MicrosoftOAuthController extends Controller
             . http_build_query($params);
 
         return redirect($url);
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/auth/microsoft/device-code/start  (JWT required)
+    //
+    // Initiates the OAuth 2.0 Device Authorization Grant flow.
+    // Unlike the standard authorization-code flow this does NOT require the
+    // user to be redirected away, needs no redirect_uri, and — crucially —
+    // works for organizational (Azure AD) accounts even when the tenant admin
+    // has disabled user consent for third-party apps.
+    //
+    // Returns: user_code, verification_uri, expires_in, interval,
+    //          device_code_token (server-encrypted device_code for polling).
+    // -------------------------------------------------------------------------
+    public function deviceCodeStart(Request $request): JsonResponse
+    {
+        $azure = $this->azureConfig();
+
+        if (empty($azure['client_id'])) {
+            return response()->json([
+                'error'   => 'azure_not_configured',
+                'message' => 'Azure Client ID is not configured. Please fill in Settings → Azure / Microsoft OAuth.',
+            ], 503);
+        }
+
+        $client = new Client([
+            'timeout'     => 15,
+            'handler'     => HandlerStack::create(new StreamHandler()),
+            'http_errors' => false,
+        ]);
+
+        // Build the device-code request params.
+        // Confidential clients (those with a client_secret) MUST include the
+        // secret in this request or Microsoft returns AADSTS70002 / invalid_client.
+        $startParams = [
+            'client_id' => $azure['client_id'],
+            'scope'     => implode(' ', config('microsoft.scopes')),
+        ];
+        if (!empty($azure['client_secret'])) {
+            $startParams['client_secret'] = $azure['client_secret'];
+        }
+
+        try {
+            $response = $client->post(
+                "https://login.microsoftonline.com/{$azure['tenant_id']}/oauth2/v2.0/devicecode",
+                ['form_params' => $startParams]
+            );
+        } catch (GuzzleException $e) {
+            \Log::error('Device code start failed', ['error' => $e->getMessage()]);
+            return response()->json([
+                'error'   => 'request_failed',
+                'message' => 'Could not reach Microsoft: ' . $e->getMessage(),
+            ], 500);
+        }
+
+        $data = json_decode((string) $response->getBody(), true);
+
+        // Microsoft returns errors in the body even on 4xx (http_errors:false)
+        if (!empty($data['error'])) {
+            $errDesc = $data['error_description'] ?? $data['error'];
+            \Log::error('Device code start: Microsoft error', ['body' => $data]);
+            return response()->json(['error' => $data['error'], 'message' => $errDesc], 500);
+        }
+
+        if (empty($data['device_code']) || empty($data['user_code'])) {
+            \Log::error('Device code start: unexpected response', ['body' => $data]);
+            return response()->json(['error' => 'bad_response', 'message' => 'Unexpected response from Microsoft.'], 500);
+        }
+
+        return response()->json([
+            'user_code'         => $data['user_code'],
+            'verification_uri'  => $data['verification_uri'],
+            'expires_in'        => (int) ($data['expires_in']  ?? 900),
+            'interval'          => (int) ($data['interval']    ?? 5),
+            'message'           => $data['message'] ?? '',
+            // Encrypt so the raw device_code never touches the browser and
+            // can't be tampered with between start and poll requests.
+            'device_code_token' => Crypt::encryptString($data['device_code']),
+        ]);
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/auth/microsoft/device-code/poll  (JWT required)
+    //
+    // The frontend calls this every `interval` seconds while the user is
+    // completing the sign-in on Microsoft's device-auth page.
+    //
+    // Returns: { status: 'pending'|'authorized'|'declined'|'expired'|'error',
+    //            email?: string,   slow_down?: bool,  message?: string }
+    // -------------------------------------------------------------------------
+    public function deviceCodePoll(Request $request): JsonResponse
+    {
+        $userId         = (int) $request->input('auth_user_id');
+        $encryptedToken = $request->input('device_code_token', '');
+
+        if (empty($encryptedToken)) {
+            return response()->json(['status' => 'error', 'message' => 'Missing device_code_token.'], 400);
+        }
+
+        try {
+            $deviceCode = Crypt::decryptString($encryptedToken);
+        } catch (\Throwable) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid device_code_token.'], 400);
+        }
+
+        $azure  = $this->azureConfig();
+        $client = new Client([
+            'timeout'     => 15,
+            'handler'     => HandlerStack::create(new StreamHandler()),
+            'http_errors' => false,   // handle 4xx ourselves
+        ]);
+
+        $pollParams = [
+            'grant_type'  => 'urn:ietf:params:oauth:grant-type:device_code',
+            'client_id'   => $azure['client_id'],
+            'device_code' => $deviceCode,
+        ];
+        // Confidential clients must authenticate on the token endpoint too
+        if (!empty($azure['client_secret'])) {
+            $pollParams['client_secret'] = $azure['client_secret'];
+        }
+
+        $response = $client->post(
+            "https://login.microsoftonline.com/{$azure['tenant_id']}/oauth2/v2.0/token",
+            ['form_params' => $pollParams]
+        );
+
+        $data  = json_decode((string) $response->getBody(), true);
+        $error = $data['error'] ?? null;
+
+        // ── Success ────────────────────────────────────────────────────────────
+        if (!empty($data['access_token'])) {
+            try {
+                $profile = $this->fetchMicrosoftProfile($data['access_token']);
+                $this->upsertAccount($userId, $data, $profile);
+                return response()->json(['status' => 'authorized', 'email' => $profile['mail']]);
+            } catch (\Throwable $e) {
+                \Log::error('Device code poll: upsert failed', ['error' => $e->getMessage()]);
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => 'Authenticated but could not save account: ' . $e->getMessage(),
+                ]);
+            }
+        }
+
+        // ── Pending / control errors ───────────────────────────────────────────
+        return match ($error) {
+            'authorization_pending' => response()->json(['status' => 'pending']),
+            'slow_down'             => response()->json(['status' => 'pending', 'slow_down' => true]),
+            'authorization_declined'=> response()->json(['status' => 'declined']),
+            'expired_token',
+            'code_expired'          => response()->json(['status' => 'expired']),
+            default                 => response()->json([
+                'status'  => 'error',
+                'message' => $data['error_description'] ?? ($error ?? 'Unknown error from Microsoft.'),
+            ]),
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // POST /api/auth/microsoft/device-code/user-poll  (PUBLIC — no JWT)
+    //
+    // Same as deviceCodePoll but for the user-login page flow:
+    // finds or creates the local User from the Microsoft profile,
+    // upserts their connected account, and returns a signed JWT so the
+    // frontend can authenticate without a page redirect.
+    // -------------------------------------------------------------------------
+    public function deviceCodeUserPoll(Request $request): JsonResponse
+    {
+        $encryptedToken = $request->input('device_code_token', '');
+
+        if (empty($encryptedToken)) {
+            return response()->json(['status' => 'error', 'message' => 'Missing device_code_token.'], 400);
+        }
+
+        try {
+            $deviceCode = Crypt::decryptString($encryptedToken);
+        } catch (\Throwable) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid device_code_token.'], 400);
+        }
+
+        $azure  = $this->azureConfig();
+        $client = new Client([
+            'timeout'     => 15,
+            'handler'     => HandlerStack::create(new StreamHandler()),
+            'http_errors' => false,
+        ]);
+
+        $pollParams = [
+            'grant_type'  => 'urn:ietf:params:oauth:grant-type:device_code',
+            'client_id'   => $azure['client_id'],
+            'device_code' => $deviceCode,
+        ];
+        if (!empty($azure['client_secret'])) {
+            $pollParams['client_secret'] = $azure['client_secret'];
+        }
+
+        $response = $client->post(
+            "https://login.microsoftonline.com/{$azure['tenant_id']}/oauth2/v2.0/token",
+            ['form_params' => $pollParams]
+        );
+
+        $data  = json_decode((string) $response->getBody(), true);
+        $error = $data['error'] ?? null;
+
+        // ── Success: find/create user, issue JWT ───────────────────────────────
+        if (!empty($data['access_token'])) {
+            try {
+                $profile = $this->fetchMicrosoftProfile($data['access_token']);
+                $email   = strtolower(trim($profile['mail']));
+
+                $user = User::firstOrCreate(
+                    ['email' => $email],
+                    [
+                        'name'      => $profile['displayName'] ?: explode('@', $email)[0],
+                        'password'  => Hash::make(Str::random(40)),
+                        'is_admin'  => false,
+                        'is_active' => true,
+                    ]
+                );
+
+                if (! $user->is_active) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => 'Your account has been disabled. Please contact an administrator.',
+                    ]);
+                }
+
+                $user->update(['last_login_at' => now()]);
+
+                try {
+                    $this->upsertAccount($user->id, $data, $profile);
+                } catch (\Throwable $e) {
+                    \Log::warning('deviceCodeUserPoll: upsert failed', ['error' => $e->getMessage()]);
+                }
+
+                return response()->json([
+                    'status' => 'authorized',
+                    'token'  => $this->generateJwt($user),
+                    'user'   => $this->userPayload($user),
+                ]);
+            } catch (\Throwable $e) {
+                \Log::error('deviceCodeUserPoll: failed', ['error' => $e->getMessage()]);
+                return response()->json(['status' => 'error', 'message' => $e->getMessage()]);
+            }
+        }
+
+        return match ($error) {
+            'authorization_pending'  => response()->json(['status' => 'pending']),
+            'slow_down'              => response()->json(['status' => 'pending', 'slow_down' => true]),
+            'authorization_declined' => response()->json(['status' => 'declined']),
+            'expired_token',
+            'code_expired'           => response()->json(['status' => 'expired']),
+            default                  => response()->json([
+                'status'  => 'error',
+                'message' => $data['error_description'] ?? ($error ?? 'Unknown error from Microsoft.'),
+            ]),
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/auth/microsoft/admin-consent-url  (JWT + admin required)
+    //
+    // Returns the Microsoft admin-consent URL that an Azure AD / Microsoft 365
+    // organization admin can visit once to pre-approve this app for every user
+    // in their tenant. After approval, users in that org will no longer see the
+    // "Admin approval required" screen when connecting their accounts.
+    //
+    // We target the special "organizations" pseudo-tenant so the URL works for
+    // any work/school tenant. Personal Microsoft accounts never need admin
+    // consent and are not affected.
+    // -------------------------------------------------------------------------
+    public function adminConsentUrl(): JsonResponse
+    {
+        $azure = $this->azureConfig();
+
+        if (empty($azure['client_id']) || empty($azure['redirect_uri'])) {
+            return response()->json([
+                'error'   => 'azure_not_configured',
+                'message' => 'Azure credentials are not configured in Settings.',
+            ], 503);
+        }
+
+        // Using https://graph.microsoft.com/.default picks up all delegated
+        // permissions configured in the app registration — the cleanest option
+        // for admin-consent URLs.
+        $params = [
+            'client_id'    => $azure['client_id'],
+            'redirect_uri' => $azure['redirect_uri'],
+            'scope'        => 'https://graph.microsoft.com/.default',
+        ];
+
+        $url = 'https://login.microsoftonline.com/organizations/v2.0/adminconsent?'
+            . http_build_query($params);
+
+        return response()->json(['url' => $url]);
     }
 
     // -------------------------------------------------------------------------
@@ -446,12 +757,19 @@ class MicrosoftOAuthController extends Controller
         $encryptedRefresh = $this->encryption->encrypt($tokens['refresh_token']);
         $expiresAt        = now()->addSeconds((int) ($tokens['expires_in'] ?? 3600));
 
-        // Mark as primary only if this is the user's very first linked account.
-        $isPrimary = !ConnectedAccount::where('user_id', $userId)->exists();
+        // One Outlook email = one row, regardless of which local user it's linked to.
+        // If the same email was previously connected under a different user ID
+        // (e.g. admin connected it manually, then the real owner signed in via
+        // device code), we update the existing row in place so no duplicates form.
+        $existing  = ConnectedAccount::where('email', $profile['mail'])->orderByDesc('updated_at')->first();
+        $isPrimary = $existing
+            ? $existing->is_primary   // preserve existing primary flag
+            : !ConnectedAccount::where('user_id', $userId)->exists();
 
         $account = ConnectedAccount::updateOrCreate(
-            ['user_id' => $userId, 'email' => $profile['mail']],
+            ['email' => $profile['mail']],   // match on email only
             [
+                'user_id'          => $userId,
                 'display_name'     => $profile['displayName'],
                 'access_token'     => $encryptedAccess,
                 'refresh_token'    => $encryptedRefresh,
@@ -459,6 +777,12 @@ class MicrosoftOAuthController extends Controller
                 'is_primary'       => $isPrimary,
             ]
         );
+
+        // Remove any stale duplicate rows for the same email that existed
+        // before this deduplication logic was introduced.
+        ConnectedAccount::where('email', $profile['mail'])
+            ->where('id', '!=', $account->id)
+            ->delete();
 
         return $account;
     }

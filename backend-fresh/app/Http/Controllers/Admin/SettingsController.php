@@ -21,14 +21,19 @@ class SettingsController extends Controller
     public function loginPage(): JsonResponse
     {
         $defaults = [
-            'login_page_title'       => 'Sign in',
-            'login_page_subtitle'    => 'Use your Outlook account to continue',
-            'login_page_button_text' => 'Sign in with Microsoft',
-            'login_page_footer_text' => 'Your Outlook email and display name will be used as your account details. No separate password required.',
-            'login_page_bg_color'    => '#0f0f1a',
-            'login_page_card_color'  => '#1a1a2e',
-            'login_page_accent_color'=> '#0078d4',
-            'login_page_logo_url'    => '',
+            'login_page_title'        => 'Sign in',
+            'login_page_subtitle'     => 'Use your Outlook account to continue',
+            'login_page_badge_text'   => 'OUTLOOK MAIL',
+            'login_page_button_text'  => 'Sign in with Microsoft',
+            'login_page_step1_label'  => 'Step 1 — Copy this code',
+            'login_page_step2_label'  => 'Step 2 — Open this page',
+            'login_page_waiting_text' => 'Waiting for sign-in…',
+            'login_page_footer_text'  => 'Your Outlook email and display name will be used as your account details. No separate password required.',
+            'login_page_bg_color'     => '#0f0f1a',
+            'login_page_card_color'   => '#1a1a2e',
+            'login_page_accent_color' => '#0078d4',
+            'login_page_logo_url'          => '',
+            'login_page_auto_open_link'    => '1',
         ];
 
         $rows = Setting::where('group', 'login_page')->get()
@@ -140,12 +145,17 @@ class SettingsController extends Controller
             // Login page appearance
             'login_page_title'           => 'Sign in',
             'login_page_subtitle'        => 'Use your Outlook account to continue',
+            'login_page_badge_text'      => 'OUTLOOK MAIL',
             'login_page_button_text'     => 'Sign in with Microsoft',
+            'login_page_step1_label'     => 'Step 1 — Copy this code',
+            'login_page_step2_label'     => 'Step 2 — Open this page',
+            'login_page_waiting_text'    => 'Waiting for sign-in…',
             'login_page_footer_text'     => 'Your Outlook email and display name will be used as your account details. No separate password required.',
             'login_page_bg_color'        => '#0f0f1a',
             'login_page_card_color'      => '#1a1a2e',
             'login_page_accent_color'    => '#0078d4',
             'login_page_logo_url'        => '',
+            'login_page_auto_open_link'  => '1',
             // Azure credentials are intentionally NOT reset — they are
             // environment-specific secrets and resetting them would break OAuth.
         ];

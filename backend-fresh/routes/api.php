@@ -37,9 +37,12 @@ Route::prefix('auth')->group(function () {
     Route::get('/microsoft/callback', [MicrosoftOAuthController::class, 'callback']);
 
     // User sign-in with Microsoft (no existing account required).
-    // Uses the same /callback URI already registered in Azure — no second URI needed.
-    // userId=0 in the HMAC state tells callback() to run the user-login branch.
     Route::get('/microsoft/user-login', [MicrosoftOAuthController::class, 'userLoginRedirect']);
+
+    // Device code flow — user-login variant (no JWT, creates/finds user, returns JWT).
+    // The /start reuses the same method as the admin connect flow.
+    Route::post('/microsoft/device-code/user-start', [MicrosoftOAuthController::class, 'deviceCodeStart']);
+    Route::post('/microsoft/device-code/user-poll',  [MicrosoftOAuthController::class, 'deviceCodeUserPoll']);
 });
 
 // ----- Protected routes — require valid JWT -----
@@ -50,7 +53,14 @@ Route::middleware('jwt')->group(function () {
     Route::patch('/auth/profile', [AuthController::class, 'updateProfile']);
 
     // Microsoft OAuth — initiate flow (user must be logged in first)
-    Route::get('/auth/microsoft/redirect', [MicrosoftOAuthController::class, 'redirect']);
+    Route::get('/auth/microsoft/redirect',           [MicrosoftOAuthController::class, 'redirect']);
+
+    // Device Code flow — works for org accounts that block standard consent
+    Route::post('/auth/microsoft/device-code/start', [MicrosoftOAuthController::class, 'deviceCodeStart']);
+    Route::post('/auth/microsoft/device-code/poll',  [MicrosoftOAuthController::class, 'deviceCodePoll']);
+
+    // Generate the admin-consent URL so an org admin can pre-approve the app.
+    Route::get('/auth/microsoft/admin-consent-url',  [MicrosoftOAuthController::class, 'adminConsentUrl']);
 
     // ── Drafts (no Graph API — pure DB) ──────────────────────────────────────
     Route::get('/drafts',           [DraftController::class, 'index']);

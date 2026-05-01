@@ -6,6 +6,20 @@ export const getMicrosoftRedirectUrl = () =>
     params: { return_url: window.location.origin },
   }).then(r => r.data)
 
+// Returns the Microsoft admin-consent URL — share with the org's IT admin so
+// they can approve the app once for their entire organization.
+export const getMicrosoftAdminConsentUrl = () =>
+  client.get('/auth/microsoft/admin-consent-url').then(r => r.data)
+
+// ── Device Code flow ─────────────────────────────────────────────────────────
+// Step 1 — get user_code + encrypted device_code_token from the server
+export const startDeviceCode = () =>
+  client.post('/auth/microsoft/device-code/start').then(r => r.data)
+
+// Step 2 — poll until status changes from 'pending'
+export const pollDeviceCode = (deviceCodeToken) =>
+  client.post('/auth/microsoft/device-code/poll', { device_code_token: deviceCodeToken }).then(r => r.data)
+
 // ── My Accounts (current logged-in user) ─────────────────────────────────────
 export const getMyAccounts      = ()   => client.get('/accounts').then(r => r.data)
 export const deleteMyAccount    = (id) => client.delete(`/accounts/${id}`).then(r => r.data)

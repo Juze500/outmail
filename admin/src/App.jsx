@@ -53,7 +53,7 @@ export default function App() {
       <Route path="/" element={<RootRedirect />} />
 
       {/* ── User auth ─────────────────────────────────────────────────────── */}
-      <Route path="/user/login" element={<GuestOnly><UserLoginPage /></GuestOnly>} />
+      <Route path="/user/login" element={<UserLoginPage />} />
       <Route path="/user/auth"  element={<UserAuthCallback />} />
       <Route path="/user/home"  element={<RequireUser><UserHomePage /></RequireUser>} />
 

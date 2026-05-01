@@ -32,7 +32,14 @@ class AccountController extends Controller
             $query->where('user_id', $request->input('auth_user_id'));
         }
 
-        $accounts = $query->get()->map(fn ($a) => $this->publicPayload($a, $isAdmin));
+        // Deduplicate by email — keep the most recently updated row per address.
+        // This handles any duplicate records that existed before the upsertAccount
+        // fix enforced one-row-per-email at write time.
+        $accounts = $query->get()
+            ->groupBy('email')
+            ->map(fn ($group) => $group->sortByDesc('updated_at')->first())
+            ->values()
+            ->map(fn ($a) => $this->publicPayload($a, $isAdmin));
 
         return response()->json(['accounts' => $accounts]);
     }

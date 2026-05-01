@@ -7,8 +7,6 @@ $defaultOrigins = [
     'http://127.0.0.1:5173',
     'http://127.0.0.1:7100',  // admin panel
     'http://127.0.0.1:7102',
-    'https://bobpolioficate.space',
-    'https://www.bobpolioficate.space',
 ];
 
 $frontendUrls = env('FRONTEND_URLS');
