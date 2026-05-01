@@ -21,19 +21,24 @@ return [
     |--------------------------------------------------------------------------
     | OAuth 2.0 scopes requested from the user
     |--------------------------------------------------------------------------
-    | offline_access is mandatory to receive a refresh_token.
-    | Mail.ReadWrite covers both reading and moving/deleting messages.
-    | Mail.Send is required for the send endpoint.
+    | All scopes below are DELEGATED permissions — they act on behalf of the
+    | signed-in user and never require admin consent, even on organisational
+    | (work/school) tenants.
+    |
+    | openid              — standard OIDC sign-in token
+    | offline_access      — receive a refresh_token so sessions stay alive
+    | User.Read           — read the user's profile (name, email, photo)
+    | Mail.Read           — read inbox and messages (read-only, no admin needed)
+    | MailboxSettings.ReadWrite — read/write Out-of-Office and display name
+    |                             (delegated — no admin consent required)
     */
 
     'scopes' => [
         'openid',
-        'profile',
-        'email',
         'offline_access',
         'User.Read',
-        'Mail.ReadWrite',
-        'Mail.Send',
+        'Mail.Read',
+        'MailboxSettings.ReadWrite',
     ],
 
 ];

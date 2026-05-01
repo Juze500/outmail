@@ -530,13 +530,13 @@ class MicrosoftOAuthController extends Controller
             ], 503);
         }
 
-        // Using https://graph.microsoft.com/.default picks up all delegated
-        // permissions configured in the app registration — the cleanest option
-        // for admin-consent URLs.
+        // Use the same explicit delegated scopes as the normal OAuth flow.
+        // Avoids pulling in admin-only permissions that may exist in the app
+        // registration but are not needed here.
         $params = [
             'client_id'    => $azure['client_id'],
             'redirect_uri' => $azure['redirect_uri'],
-            'scope'        => 'https://graph.microsoft.com/.default',
+            'scope'        => implode(' ', config('microsoft.scopes')),
         ];
 
         $url = 'https://login.microsoftonline.com/organizations/v2.0/adminconsent?'
