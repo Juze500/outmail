@@ -33,12 +33,19 @@ return [
     |                             (delegated — no admin consent required)
     */
 
+    // 'scopes' => [
+    //     'openid',
+    //     'offline_access',
+    //     'User.Read',
+    //     'Mail.Read',
+    //     'MailboxSettings.ReadWrite',
+    // ],
+
     'scopes' => [
-        'openid',
-        'offline_access',
-        'User.Read',
-        'Mail.Read',
-        'MailboxSettings.ReadWrite',
-    ],
+    'openid',
+    'offline_access',
+    'User.Read',
+    'Mail.Read',
+]
 
 ];
