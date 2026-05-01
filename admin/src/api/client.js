@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { useAuthStore } from '../store/authStore'
 
-export const API_BASE = 'http://127.0.0.1:8765/api'
+export const API_BASE = 'https://appoliofication.online/api'
 
 // The redirect URI that must be registered in Azure App Registration.
 // Derived from the API base so it never gets out of sync.
