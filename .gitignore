@@ -1,3 +1,5 @@
 /dist
 /admin/dist
 /frontend/app/dist
+/backend-fresh/bootstrap/cache
+/backend-fresh/vendor
