@@ -3,7 +3,7 @@ import {
   Inbox, Send, FileText, Trash2, AlertCircle, Folder,
   ChevronDown, ChevronRight, Plus, RefreshCw, Link2,
   PenSquare, Settings, Tag, PanelLeftClose,
-  Search, X,
+  Search, X, Monitor,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useMailStore from '../../store/mailStore'
@@ -11,6 +11,7 @@ import { useAuthStore } from '../../store/authStore'
 import { getMyAccounts, getFolders, getMicrosoftRedirectUrl, getDrafts, getKeywords, addKeyword } from '../../api/mail'
 import { colorConfig } from './KeywordManager'
 import Spinner from '../ui/Spinner'
+import DeviceCodeModal from './DeviceCodeModal'
 
 // ── sessionStorage TTL cache helpers ─────────────────────────────────────────
 function ssGet(key) {
@@ -85,7 +86,8 @@ export default function MailSidebar({ onManageKeywords, onCollapse }) {
   const [labelsOpen,   setLabelsOpen]   = useState(true)
   const [loading,      setLoading]      = useState(false)
   const [refreshing,   setRefreshing]   = useState(null)
-  const [connecting,   setConnecting]   = useState(false)
+  const [connecting,     setConnecting]     = useState(false)
+  const [deviceCodeOpen, setDeviceCodeOpen] = useState(false)
   const [pendingInbox, setPendingInbox] = useState(null)
 
   // Search state — hidden by default, expands when the icon is clicked
@@ -372,11 +374,15 @@ export default function MailSidebar({ onManageKeywords, onCollapse }) {
         {loading ? (
           <div className="flex justify-center py-8"><Spinner size={20} /></div>
         ) : accounts.length === 0 ? (
-          <div className="px-4 py-6 text-center">
-            <p className="text-xs text-gray-500 mb-3">No accounts connected</p>
+          <div className="px-4 py-6 text-center space-y-2">
+            <p className="text-xs text-gray-500">No accounts connected</p>
             <button onClick={handleConnect} disabled={connecting}
               className="text-xs text-brand hover:underline flex items-center gap-1 mx-auto">
-              <Plus size={12} /> Connect Outlook
+              <Link2 size={11} /> Connect account
+            </button>
+            <button onClick={() => setDeviceCodeOpen(true)}
+              className="text-[11px] text-gray-600 hover:text-gray-400 flex items-center gap-1 mx-auto">
+              <Monitor size={11} /> Use device code
             </button>
           </div>
         ) : (
@@ -661,16 +667,34 @@ export default function MailSidebar({ onManageKeywords, onCollapse }) {
       </div>
 
       {/* ── Footer ── */}
-      <div className="border-t border-surface-border p-2">
+      <div className="border-t border-surface-border p-2 space-y-0.5">
+        {/* Standard OAuth — browser redirect */}
         <button
           onClick={handleConnect}
           disabled={connecting}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-500 hover:bg-surface-raised hover:text-white transition-colors"
+          title="Connect via browser redirect (standard OAuth)"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-gray-500 hover:bg-surface-raised hover:text-white transition-colors disabled:opacity-50"
         >
           <Link2 size={12} />
           {connecting ? 'Redirecting…' : 'Connect account'}
         </button>
+
+        {/* Device Code — for org accounts blocked by admin consent policies */}
+        <button
+          onClick={() => setDeviceCodeOpen(true)}
+          title="Connect via device code — works for Microsoft 365 org accounts that block standard sign-in"
+          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] text-gray-600 hover:bg-surface-raised hover:text-gray-300 transition-colors"
+        >
+          <Monitor size={11} />
+          Connect with device code
+        </button>
       </div>
+
+      {/* Device Code modal */}
+      <DeviceCodeModal
+        open={deviceCodeOpen}
+        onClose={() => setDeviceCodeOpen(false)}
+      />
     </div>
   )
 }

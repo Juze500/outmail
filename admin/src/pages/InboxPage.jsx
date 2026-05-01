@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import {
   PenSquare, Users, ChevronRight, ChevronLeft,
   PanelRightClose, PanelLeftOpen,
+  ShieldAlert, Copy, ExternalLink, CheckCircle2, Building2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import AdminLayout    from '../components/layout/AdminLayout'
@@ -14,8 +15,125 @@ import MailMoveModal  from '../components/mail/MailMoveModal'
 import MailSearch     from '../components/mail/MailSearch'
 import BulkSendModal  from '../components/mail/BulkSendModal'
 import KeywordManager from '../components/mail/KeywordManager'
+import Modal          from '../components/ui/Modal'
+import Spinner        from '../components/ui/Spinner'
 import useMailStore      from '../store/mailStore'
 import useBulkSendStore from '../store/bulkSendStore'
+import { getMicrosoftAdminConsentUrl } from '../api/mail'
+
+// ── Admin Consent Modal ───────────────────────────────────────────────────────
+// Shown when the OAuth callback returns oauth_error=admin_required.
+// Guides the user on how to get an org admin to approve the app.
+function AdminConsentModal({ open, onClose }) {
+  const [consentUrl, setConsentUrl]   = useState('')
+  const [loading,    setLoading]      = useState(false)
+  const [copied,     setCopied]       = useState(false)
+  const [fetchError, setFetchError]   = useState('')
+
+  useEffect(() => {
+    if (!open) { setConsentUrl(''); setCopied(false); setFetchError(''); return }
+    setLoading(true)
+    getMicrosoftAdminConsentUrl()
+      .then(d => setConsentUrl(d.url ?? ''))
+      .catch(e => setFetchError(e.response?.data?.message ?? 'Could not generate consent URL.'))
+      .finally(() => setLoading(false))
+  }, [open])
+
+  function handleCopy() {
+    if (!consentUrl) return
+    navigator.clipboard.writeText(consentUrl).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    })
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Organization Admin Approval Required" size="md">
+      {/* Icon + explanation */}
+      <div className="flex gap-4 mb-5">
+        <div className="flex-shrink-0 p-2.5 rounded-xl bg-yellow-500/10 text-yellow-400 h-fit mt-0.5">
+          <Building2 size={22} />
+        </div>
+        <div className="text-sm text-gray-300 space-y-2 leading-relaxed">
+          <p>
+            This Outlook account belongs to a <span className="text-white font-medium">Microsoft 365 organization</span> whose
+            IT policy requires an admin to approve third-party apps before users can connect them.
+          </p>
+          <p className="text-gray-400 text-xs">
+            This is a Microsoft tenant security policy — not an issue with this app. Once a Microsoft 365
+            admin for that organization approves the app, all users in their org can connect their accounts
+            without hitting this screen.
+          </p>
+        </div>
+      </div>
+
+      {/* Steps */}
+      <div className="rounded-xl border border-surface-border bg-surface p-4 mb-5 space-y-3 text-sm">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">How to fix this</p>
+        {[
+          'Copy the admin consent URL below.',
+          'Share it with the Microsoft 365 / Azure AD admin of the organization.',
+          'The admin opens the URL, signs in with their admin account, and clicks Accept.',
+          'After approval, the user can reconnect their account — the approval screen will be gone.',
+        ].map((step, i) => (
+          <div key={i} className="flex items-start gap-2.5">
+            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-brand/20 text-brand text-[11px] font-bold flex items-center justify-center mt-0.5">
+              {i + 1}
+            </span>
+            <p className="text-gray-300 leading-snug">{step}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Consent URL */}
+      <div className="mb-5">
+        <p className="text-xs font-medium text-gray-400 mb-2">Admin Consent URL</p>
+        {loading ? (
+          <div className="flex items-center gap-2 h-10 text-gray-500 text-sm">
+            <Spinner size={14} /> Generating URL…
+          </div>
+        ) : fetchError ? (
+          <p className="text-xs text-red-400 bg-red-500/10 rounded-lg px-3 py-2">{fetchError}</p>
+        ) : (
+          <div className="flex gap-2">
+            <div className="flex-1 min-w-0 bg-surface-raised border border-surface-border rounded-lg px-3 py-2">
+              <p className="text-[11px] text-gray-300 break-all font-mono leading-snug truncate" title={consentUrl}>
+                {consentUrl}
+              </p>
+            </div>
+            <div className="flex gap-1.5 flex-shrink-0">
+              <button
+                onClick={handleCopy}
+                title="Copy to clipboard"
+                className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-brand/10 text-brand hover:bg-brand/20 transition-colors"
+              >
+                {copied ? <CheckCircle2 size={13} /> : <Copy size={13} />}
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
+              <a
+                href={consentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in browser (use this if YOU are the org admin)"
+                className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium bg-surface-raised border border-surface-border text-gray-400 hover:text-white hover:border-brand/40 transition-colors"
+              >
+                <ExternalLink size={13} />
+                Open
+              </a>
+            </div>
+          </div>
+        )}
+        <p className="text-[11px] text-gray-600 mt-1.5">
+          If you are the org admin, click <span className="text-gray-400">Open</span> to approve the app directly.
+        </p>
+      </div>
+
+      <div className="flex justify-end">
+        <button onClick={onClose} className="btn-ghost text-sm">Close</button>
+      </div>
+    </Modal>
+  )
+}
 
 // ── Persist / restore layout ──────────────────────────────────────────────────
 const LAYOUT_KEY  = 'inbox-layout'
@@ -86,9 +204,10 @@ export default function InboxPage() {
   const { setCompose, openEmail } = useMailStore()
   const { requestOpen, clearRequestOpen } = useBulkSendStore()
 
-  const [moveOpen,  setMoveOpen]  = useState(false)
-  const [bulkOpen,  setBulkOpen]  = useState(false)
-  const [kwMgrOpen, setKwMgrOpen] = useState(false)
+  const [moveOpen,        setMoveOpen]        = useState(false)
+  const [bulkOpen,        setBulkOpen]        = useState(false)
+  const [kwMgrOpen,       setKwMgrOpen]       = useState(false)
+  const [adminConsentOpen, setAdminConsentOpen] = useState(false)
 
   // ── Layout state ─────────────────────────────────────────────────────────
   const [layout, setLayout] = useState(loadLayout)
@@ -148,8 +267,14 @@ export default function InboxPage() {
       navigate('/inbox', { replace: true })
       window.dispatchEvent(new CustomEvent('reload-mail-accounts'))
     } else if (params.get('oauth_error')) {
-      toast.error('OAuth error: ' + decodeURIComponent(params.get('oauth_error')), { duration: 8000 })
+      const err = params.get('oauth_error')
       navigate('/inbox', { replace: true })
+      if (err === 'admin_required') {
+        // Show the dedicated admin-consent modal instead of a raw error toast
+        setAdminConsentOpen(true)
+      } else {
+        toast.error('OAuth error: ' + decodeURIComponent(err), { duration: 8000 })
+      }
     } else if (params.get('open_account')) {
       // Navigated here from the Accounts page — signal the sidebar to open this
       // account's inbox once folders are loaded.
@@ -271,9 +396,10 @@ export default function InboxPage() {
 
       {/* Modals */}
       <MailCompose />
-      <MailMoveModal  open={moveOpen}  onClose={() => setMoveOpen(false)} />
-      <BulkSendModal  open={bulkOpen}  onClose={() => setBulkOpen(false)} />
-      <KeywordManager open={kwMgrOpen} onClose={() => setKwMgrOpen(false)} />
+      <MailMoveModal      open={moveOpen}         onClose={() => setMoveOpen(false)} />
+      <BulkSendModal      open={bulkOpen}         onClose={() => setBulkOpen(false)} />
+      <KeywordManager     open={kwMgrOpen}        onClose={() => setKwMgrOpen(false)} />
+      <AdminConsentModal  open={adminConsentOpen} onClose={() => setAdminConsentOpen(false)} />
     </AdminLayout>
   )
 }
